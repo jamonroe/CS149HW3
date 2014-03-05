@@ -2,8 +2,6 @@ For the medium price sellers, the row formula is:
 For n completed rows
 row = 50 + 10 * ceiling(n/2) * (-1)^n
 or
-row = 50 + 10 * (n + 2 - 1)/2 * (-1)^n
-or
 #include <math.h>
-row = 50 + 10 * (n + 2 - 1)/2 * pow(-1, n);
+row = 50 + 10 * ceil(n/2) * pow(-1, n);
 
