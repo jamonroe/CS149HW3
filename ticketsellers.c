@@ -29,15 +29,40 @@ sem_t h_queue; //Ticket sellers (high) wait on this semaphore
 sem_t m_queue; //Ticket sellers (medium) wait on this semaphore
 sem_t l_queue; //Ticket sellers (lower) wait on this semaphore
 
+struct itimerval officeTimer; // Box office business hour timer
+time_t startTime;
+
+int firstPrint = true;
+int boxOfficeOpen = false;
+int businessHours = true;
+
 // Print a line for each event:
 //   elapsed time
-//   who is meeting with the professor
-//   who is waiting in the chairs
-//   what event occurred
 void print(char *event)
 {
+	//Calculate time stamp
+	time_t now;
+    time(&now);
+    double elapsed = difftime(now, startTime);
+    int min = 0;
+    int sec = (int) elapsed;
+
+    if (sec >= 60) {
+        min++;
+        sec -= 60;
+    }
+    //End time stamp calculation
+
     // Acquire the mutex lock to protect the printing.
     pthread_mutex_lock(&printMutex);
+
+    if (firstPrint) {
+        printf("TIME | MEETING | WAITING     | EVENT\n");
+        firstPrint = false;
+    }
+
+ 	// Print elapsed time.
+    printf("%1d:%02d | ", min, sec);
 
     printf("%s\n", event);
 
@@ -50,16 +75,27 @@ void sellerHelpsCustomer()
 
 }
 
-void customerArrives(int type)
+void customerArrives(int customer_id, int ticket_type)
 {
-	pthread_mutex_lock(&printMutex);
-	printf("Customer ID: %d\n",type);
-	pthread_mutex_unlock(&printMutex);
+	char event[80];
+	sprintf(event, "Customer %d arrives. Priority: %d", customer_id, ticket_type);
+	print(event);
 }
 
 //Ticket seller thread
 void *ticketseller(void *param)
 {
+	//First ticket seller opens the box office
+	if(!boxOfficeOpen)
+	{
+		time(&startTime);
+		print("Box office open");
+		boxOfficeOpen = true;
+		// Set the timer for for office hour duration.
+    	officeTimer.it_value.tv_sec = HOURS_OF_OPERATION;
+    	setitimer(ITIMER_REAL, &officeTimer, NULL);
+	}
+
 	//Seller types: 1 - High Priority 
 	//				2 - Medium Priority
 	//				3 - Low Priority
@@ -73,20 +109,31 @@ void *ticketseller(void *param)
 		case 3:startPos = 9;break;
 	}
 
-	while(true){};
+	do{
+		sellerHelpsCustomer();
+	}while(businessHours);
+
+	print("Box office closed");
+}
+
+// Timer signal handler.
+void timerHandler(int signal)
+{
+    businessHours = false;  // office hour is over
 }
 
 //Customer thread
 void *customer(void *param)
 {
 	//Customer type (1-High, 2-Medium, 3-Low)
-	int type = *((int *) param);
-	//printf("Customer thread: %d\n", type);
+	int customer_id = *((int *) param);
+	int ticket_type = rand()%3+1;
+
 	int sleepTime = rand()%HOURS_OF_OPERATION;
 	
 	sleep(sleepTime);
 
-	customerArrives(type);
+	customerArrives(customer_id, ticket_type);
 	return NULL;
 }
 
@@ -130,6 +177,9 @@ int main( int argc, char* argv[] )
         pthread_attr_init(&customerAttr);
         pthread_create(&customerThreadId, &customerAttr, customer, &customerIds[i]);
 	}
+
+	// Set the timer signal handler.
+    signal(SIGALRM, timerHandler);
 
 	//Wait for thread to end
 	pthread_join(professorThreadId, NULL);
