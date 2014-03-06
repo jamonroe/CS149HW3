@@ -122,6 +122,7 @@ void print(char *event, int showQueue)
     }
     if(showQueue)
     {
+    	printf("              | ");
     	printf("%c: [ ", queue_name);
     	int index = start;
     	for(index;index<end;index++)
@@ -143,19 +144,37 @@ void print(char *event, int showQueue)
 // returns NULL if there are no seats remaining
 int * findSeat(int priority)
 {
+	// Acquire the mutex lock to protect the printing.
+    pthread_mutex_lock(&seatsMutex);
 	if(!seatsRemaining)
 		return NULL;
+
+	int startPos;
+	switch(priority)
+	{
+		case 1:startPos = 0;break;
+		case 2:startPos = 5;break;
+		case 3:startPos = 9;break;
+	}
 
 	int seatLoc[2];
 	seatLoc[0] = -1;
 	seatLoc[1] = -1;
 	seatsRemaining--;
+	// Release the mutex lock.
+    pthread_mutex_unlock(&seatsMutex);
+
 	return seatLoc;
+
 }
 
 void sellerHelpsCustomer()
 {
+	//Get a customer from the queue
 
+	//Find them a seat
+
+	//Get next customer (if available)
 }
 
 void customerArrives(int customer_id, int ticket_type)
@@ -185,8 +204,8 @@ void customerArrives(int customer_id, int ticket_type)
 	print(event, ticket_type);
 }
 
-//Ticket seller thread
-void *ticketseller(void *param)
+//Ticket seller threads
+void *highSeller(void *param)
 {
 	//First ticket seller opens the box office
 	if(!boxOfficeOpen)
@@ -204,19 +223,76 @@ void *ticketseller(void *param)
 	//				3 - Low Priority
 	int sellerType = *((int *) param);
 
-	int startPos;
-	switch(sellerType)
-	{
-		case 1:startPos = 0;break;
-		case 2:startPos = 5;break;
-		case 3:startPos = 9;break;
+	do{
+		sellerHelpsCustomer();
+	}while(businessHours);
+
+	//Ticket seller closes the box office
+	if(boxOfficeOpen){
+		print("Box office closed", 0);
+		boxOfficeOpen = false;	
 	}
+	
+}
+
+void *mediumSeller(void *param)
+{
+	//First ticket seller opens the box office
+	if(!boxOfficeOpen)
+	{
+		time(&startTime);
+		print("Box office open", 0);
+		boxOfficeOpen = true;
+		// Set the timer for for office hour duration.
+    	officeTimer.it_value.tv_sec = HOURS_OF_OPERATION;
+    	setitimer(ITIMER_REAL, &officeTimer, NULL);
+	}
+
+	//Seller types: 1 - High Priority 
+	//				2 - Medium Priority
+	//				3 - Low Priority
+	int sellerType = *((int *) param);
 
 	do{
 		sellerHelpsCustomer();
 	}while(businessHours);
 
-	print("Box office closed", 0);
+	//Ticket seller closes the box office
+	if(boxOfficeOpen){
+		print("Box office closed", 0);
+		boxOfficeOpen = false;	
+	}
+	
+}
+
+void *lowSeller(void *param)
+{
+	//First ticket seller opens the box office
+	if(!boxOfficeOpen)
+	{
+		time(&startTime);
+		print("Box office open", 0);
+		boxOfficeOpen = true;
+		// Set the timer for for office hour duration.
+    	officeTimer.it_value.tv_sec = HOURS_OF_OPERATION;
+    	setitimer(ITIMER_REAL, &officeTimer, NULL);
+	}
+
+	//Seller types: 1 - High Priority 
+	//				2 - Medium Priority
+	//				3 - Low Priority
+	int sellerType = *((int *) param);
+
+	do{
+		sellerHelpsCustomer();
+	}while(businessHours);
+
+	//Ticket seller closes the box office
+	if(boxOfficeOpen){
+		print("Box office closed", 0);
+		boxOfficeOpen = false;	
+	}
+	
 }
 
 // Timer signal handler.
@@ -266,19 +342,33 @@ int main( int argc, char* argv[] )
     sem_init(&l_queue_sem, 0, 0);
 	printf("SIMULATION READY >:)\n");
 	printf("==========Jerrick - Ticket Sellers Simulation==========\n");
+	
 	//Create High ticket seller threads
+	pthread_t highThreadId;
+    pthread_attr_t highAttr;
+    pthread_attr_init(&highAttr);
+    pthread_create(&highThreadId, &highAttr, highSeller , 0);
 
 	//Create Medium ticket seller threads
+	int i;
+	for(i=0;i<MEDIUM_SELLERS;i++)
+	{
+		pthread_t mediumThreadId;
+        pthread_attr_t mediumAttr;
+        pthread_attr_init(&mediumAttr);
+        pthread_create(&mediumThreadId, &mediumAttr, mediumSeller, i+1);
+	}
 
 	//Create Low ticket seller threads
-	int professorId = 0;
-	pthread_t professorThreadId;
-    pthread_attr_t profAttr;
-    pthread_attr_init(&profAttr);
-    pthread_create(&professorThreadId, &profAttr, ticketseller, &professorId);
+	for(i=0;i<LOW_SELLERS;i++)
+	{
+		pthread_t lowThreadId;
+        pthread_attr_t lowAttr;
+        pthread_attr_init(&lowAttr);
+        pthread_create(&lowThreadId, &lowAttr, lowSeller, i+1);
+	}
 
 	//Create customer threads
-	int i;
 	for(i=0;i < n; i++)
 	{
 		customerIds[i] = ID_BASE + i;
@@ -291,6 +381,6 @@ int main( int argc, char* argv[] )
 	// Set the timer signal handler.
     signal(SIGALRM, timerHandler);
 
-	//Wait for thread to end
-	pthread_join(professorThreadId, NULL);
+	//Wait for threads to end
+	pthread_join(highThreadId, NULL);
 }
