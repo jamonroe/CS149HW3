@@ -58,7 +58,7 @@ struct seat {
 
 //The array of seats
 struct seat seats[SIZE];
-int customerCount = 5;
+int customerCount = 4;
 
 //Used to initialize the seats to empty and sales to zero
 void init() {
@@ -72,26 +72,6 @@ void init() {
    sales[MEDIUM] = 0;
    sales[LOW] = 0;
    lost_sales = 0;
-}
-
-//Used to print events
-void print(char *event) {
-   
-   //Calculate the timestamp
-   time_t now;
-   time(&now);
-   double elapsed = difftime(now, startTime);
-   int min = 0;
-   int sec = (int) elapsed;
-
-   //Convert the seconds to minutes and seconds
-   while (sec >= 60) {
-      min++;
-      sec -= 60;
-   }
-
-   //Elapsed time and event
-   printf("%2d:%02d | %s\n", min, sec, event);
 }
 
 void printseat(int i) {
@@ -113,31 +93,46 @@ void printstadium() {
    }
 }
 
+//Used to print events
+void print(char *event, int printSeating) {
+   
+   //Calculate the timestamp
+   time_t now;
+   time(&now);
+   double elapsed = difftime(now, startTime);
+   int min = 0;
+   int sec = (int) elapsed;
+
+   //Convert the seconds to minutes and seconds
+   while (sec >= 60) {
+      min++;
+      sec -= 60;
+   }
+
+   //Acquire the mutex lock to protect printing
+   pthread_mutex_lock(&printMutex);
+
+   //Elapsed time and event
+   printf("%2d:%02d | %s\n", min, sec, event);
+
+   if (printSeating) {
+      printf("\n");
+      printstadium();
+      printf("\n");
+   }
+
+   //Release the mutex lock for printing
+   pthread_mutex_unlock(&printMutex);
+}
+
 //Used to sell a seat
 void sellseat(struct seller *s, int i) {
    if (i >= 0 && i < SIZE) {
-
       (*s).sold = (*s).sold + 1;
       seats[i].name = (*s).name;
       seats[i].type = (*s).type;
       seats[i].sold = (*s).sold;
       sales[seats[i].type]++;
-
-      char event[80];
-      sprintf(event, "Ticket Seller %s sells seat %d (sale #%d)", seats[i].name, i, seats[i].sold);
-      
-      //Acquire the mutex lock to protect printing
-      pthread_mutex_lock(&printMutex);
-
-      //Print the sale
-      print(event);
-      printf("\n");
-
-      //Print the new seating chart
-      printstadium();
-
-      //Release the mutex lock for printing
-      pthread_mutex_unlock(&printMutex);
    }
 }
 
@@ -184,14 +179,8 @@ void customerArrives(struct seller *s) {
    char event[80];
    sprintf(event, "A customer arrives at ticket seller %s", (*s).name);
    
-   //Acquire the mutex lock to protect printing
-   pthread_mutex_lock(&printMutex);
+   print(event, FALSE);
 
-   print(event);
-
-   //Release the mutex lock for printing
-   pthread_mutex_unlock(&printMutex);
-   
    //Notify the ticket seller that there is a customer
    sem_post(&(*s).waiting);
 }
@@ -210,23 +199,65 @@ void *customer(void *param) {
 }
 
 //A ticket seller services a customer
-void sellerHelpsCustomer(struct seller *s) {
+int sellerHelpsCustomer(struct seller *s) {
    
-   if (!timesUp) {
-      //Wait for a customer to arrive
-      sem_wait(&(*s).waiting);
+   //Wait for a customer to arrive
+   sem_wait(&(*s).waiting);
+
+   //When time is up, the customers leave the queue
+   if (timesUp) {
+
+      int lost;
+      sem_getvalue(&(*s).waiting, &lost);
+      if (lost == 0) {
+         return 0;
+      }
+
+      //Acquire the mutex lock to protect lost_sales
+      pthread_mutex_lock(&seatMutex);
+
+      lost_sales = lost_sales + lost;
+
+      //Release the mutex lock for seating
+      pthread_mutex_unlock(&seatMutex);
 
       char event[80];
-      sprintf(event, "A customer is helped at ticket seller %s", (*s).name);
-   
-      //Acquire the mutex lock to protect printing
-      pthread_mutex_lock(&printMutex);
+      sprintf(event, "%d customer(s) leave(s) ticket seller %s", lost, (*s).name);
 
-      print(event);
-
-      //Release the mutex lock for printing
-      pthread_mutex_unlock(&printMutex);
+      print(event, FALSE);
+      return 0;
    }
+
+   char event[80];
+
+   //Acquire the mutex lock to protect seating
+   pthread_mutex_lock(&seatMutex);
+
+   int seat = findseat((*s).type);
+   if (seat == -1) {
+      //Release the mutex lock for seating
+      pthread_mutex_unlock(&seatMutex);
+
+      sprintf(event, "A customer arrives at ticket seller %s but no seats are available", (*s).name);
+      print(event, FALSE);
+      lost_sales++;
+      return 1;
+   }
+   
+   sellseat(s, seat);
+   
+   //Release the mutex lock for seating
+   pthread_mutex_unlock(&seatMutex);
+
+   sprintf(event, "Ticket seller %s begins the sale of seat #%d", (*s).name, seat);
+   print(event, TRUE);
+
+   int sleeptime = rand()%((*s).type + 1) + pow(2, (*s).type - 1);
+   sleep(sleeptime);
+   
+   sprintf(event, "After %d minutes the ticket seller %s finishes the sale", sleeptime, (*s).name);
+   print(event, FALSE);
+   return 1;
 }
 
 void *ticketSeller(void *param) {
@@ -234,27 +265,33 @@ void *ticketSeller(void *param) {
 
    //Set up customer threads
    int i;
-   //for (i = 0; i < customerCount; i++) {
+   for (i = 0; i < customerCount; i++) {
       pthread_t customerThreadId;
       pthread_attr_t customerAttr;
       pthread_attr_init(&customerAttr);
       pthread_create(&customerThreadId, &customerAttr, customer, s);
-   //}
+   }
 
    //Wait for the sale to start
    while (!hourStarted) { }
+   int flag;
    //Help customers during the sale
    do {
-      sellerHelpsCustomer(s);
-   } while (!timesUp);
-   
-   return NULL;
+      flag = sellerHelpsCustomer(s);
+   } while (flag);
 }
 
+struct seller s_temp;
+struct seller s_qemp;
+   
 // Timer signal handler.
 void timerHandler(int signal)
 {
-    timesUp = 1;  // ticket office hour is over
+   timesUp = 1;  // ticket office hour is over
+    
+   //Notify the ticket seller that there is a customer
+   sem_post(&s_temp.waiting);
+   sem_post(&s_qemp.waiting);
 }
 
 int main() {
@@ -269,21 +306,34 @@ int main() {
 
    //Construct the sellers (1 HIGH, 3 MEDIUM, 6 LOW)
    /* INCOMPLETE */
-   struct seller s;
-   s.name = "H0";
-   s.type = HIGH;
-   s.sold = 0;
-   sem_init(&s.waiting, 0, 0);
-   sem_init(&semTemp, 0, 0);
+   s_temp.name = "H0";
+   s_temp.type = HIGH;
+   s_temp.sold = 0;
+   sem_init(&s_temp.waiting, 0, 0);
 
    //Create seller threads
    /* INCOMPLETE */
    pthread_t ticketSellerThreadId;
    pthread_attr_t ticketSellerAttr;
    pthread_attr_init(&ticketSellerAttr);
-   pthread_create(&ticketSellerThreadId, &ticketSellerAttr, ticketSeller, &s);
+   pthread_create(&ticketSellerThreadId, &ticketSellerAttr, ticketSeller, &s_temp);
+
+   //Construct the sellers (1 HIGH, 3 MEDIUM, 6 LOW)
+   /* INCOMPLETE */
+   s_qemp.name = "M1";
+   s_qemp.type = MEDIUM;
+   s_qemp.sold = 0;
+   sem_init(&s_qemp.waiting, 0, 0);
+
+   //Create seller threads
+   /* INCOMPLETE */
+   pthread_t ticketSellerThreadId2;
+   pthread_attr_t ticketSellerAttr2;
+   pthread_attr_init(&ticketSellerAttr2);
+   pthread_create(&ticketSellerThreadId2, &ticketSellerAttr2, ticketSeller, &s_qemp);
 
    //Start the ticket selling
+   printf("Simulation start\n");
    time(&startTime);
    hourStarted = 1;
    saleTimer.it_value.tv_sec = SALE_DURATION;
@@ -292,6 +342,9 @@ int main() {
    //Wait for the threads to finish
    /* INCOMPLETE */
    pthread_join(ticketSellerThreadId, NULL);
+   pthread_join(ticketSellerThreadId2, NULL);
+
+   print("Simulation Complete", TRUE);
 
    return 1;
 }
