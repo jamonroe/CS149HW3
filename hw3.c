@@ -61,7 +61,7 @@ struct seat {
 //The array of seats
 struct seat seats[SIZE];
 struct seller sellers[10];
-int customerCount = 5;
+int customerCount;
 
 void printseat(int i) {
    if (seats[i].type == EMPTY) {
@@ -227,7 +227,7 @@ int sellerHelpsCustomer(struct seller *s) {
       //Release the mutex lock for seating
       pthread_mutex_unlock(&seatMutex);
 
-      sprintf(event, "A customer arrives at ticket seller %s but no seats are available", (*s).name);
+      sprintf(event, "A customer leaves ticket seller %s since no seats are available", (*s).name);
       print(event, FALSE);
       lost_sales++;
       return 1;
@@ -298,7 +298,7 @@ void initSeats() {
 //Used to initialize the sellers
 void initSellers() {
    int i;
-   char *name;
+   char name[3];
    //HIGH PRICE TICKET SELLER
       sellers[0].name = "H0";
       sellers[0].type = HIGH;
@@ -341,8 +341,20 @@ void initSellers() {
    }
 }
 
-int main() {
-   //srand(time(0));
+int main(int argc, char *argv[]) {
+   if (argc != 2) {
+      fprintf(stderr, 
+         "Usage: Indicate the number of customers for each ticket seller (5, 10, or 15)\n");
+      return -1;
+   }
+
+   customerCount = atoi(argv[1]);
+   if (customerCount != 5 && customerCount != 10 && customerCount != 15) {
+      fprintf(stderr,
+         "Usage: Indicate the number of customers for each ticket seller (5, 10, or 15)\n");
+      return -1;
+   }
+   srand(time(0));
 
    //Initialize seats and sellers
    initSeats();
