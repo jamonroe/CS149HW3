@@ -10,11 +10,12 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <string.h>
 #include <sys/time.h>
 #include <math.h>
 
 #define SIZE 100
-#define SALE_DURATION 10
+#define SALE_DURATION 60
 
 #define TRUE 1
 #define FALSE 0
@@ -47,6 +48,7 @@ struct seller {
    int type;
    int sold;
    sem_t waiting;
+   pthread_t threadid;
 };
 
 //A struct to store seat information
@@ -58,21 +60,8 @@ struct seat {
 
 //The array of seats
 struct seat seats[SIZE];
-int customerCount = 4;
-
-//Used to initialize the seats to empty and sales to zero
-void init() {
-   int i;
-   for (i = 0; i < SIZE; i++) {
-      seats[i].name = "--";
-      seats[i].type = EMPTY;
-      seats[i].sold = 0;
-   }
-   sales[HIGH] = 0;
-   sales[MEDIUM] = 0;
-   sales[LOW] = 0;
-   lost_sales = 0;
-}
+struct seller sellers[10];
+int customerCount = 5;
 
 void printseat(int i) {
    if (seats[i].type == EMPTY) {
@@ -280,22 +269,84 @@ void *ticketSeller(void *param) {
       flag = sellerHelpsCustomer(s);
    } while (flag);
 }
-
-struct seller s_temp;
-struct seller s_qemp;
    
 // Timer signal handler.
 void timerHandler(int signal)
 {
    timesUp = 1;  // ticket office hour is over
-    
-   //Notify the ticket seller that there is a customer
-   sem_post(&s_temp.waiting);
-   sem_post(&s_qemp.waiting);
+   print("Ticket sales end", FALSE);
+   //Wake up ticket sellers
+   int i;
+   for (i = 0; i < 10; i++) {
+      sem_post(&sellers[i].waiting);
+   }
+}
+
+//Used to initialize the seats to empty and sales to zero
+void initSeats() {
+   int i;
+   for (i = 0; i < SIZE; i++) {
+      seats[i].type = EMPTY;
+      seats[i].sold = 0;
+   }
+   sales[HIGH] = 0;
+   sales[MEDIUM] = 0;
+   sales[LOW] = 0;
+   lost_sales = 0;
+}
+
+//Used to initialize the sellers
+void initSellers() {
+   int i;
+   char *name;
+   //HIGH PRICE TICKET SELLER
+      sellers[0].name = "H0";
+      sellers[0].type = HIGH;
+      sellers[0].sold = 0;
+      sem_init(&sellers[0].waiting, 0, 0);
+
+      //Create seller threads
+      pthread_attr_t ticketSellerAttr;
+      pthread_attr_init(&ticketSellerAttr);
+      pthread_create(&sellers[0].threadid, &ticketSellerAttr, ticketSeller, &sellers[0]);
+
+   //MEDIUM PRICE TICKET SELLERS
+   for (i = 1; i < 4; i++) {
+      sprintf(name, "M%1d", i);
+      sellers[i].name = (char *) malloc(strlen(name)*sizeof(char));
+      strcpy(sellers[i].name, name);
+      sellers[i].type = MEDIUM;
+      sellers[i].sold = 0;
+      sem_init(&sellers[i].waiting, 0, 0);
+
+      //Create seller threads
+      pthread_attr_t ticketSellerAttr;
+      pthread_attr_init(&ticketSellerAttr);
+      pthread_create(&sellers[i].threadid, &ticketSellerAttr, ticketSeller, &sellers[i]);
+   }
+
+   //LOW PRICE TICKET SELLERS
+   for (i = 4; i < 10; i++) {
+      sprintf(name, "L%1d", i-3);
+      sellers[i].name = (char *) malloc(strlen(name)*sizeof(char));
+      strcpy(sellers[i].name, name);
+      sellers[i].type = LOW;
+      sellers[i].sold = 0;
+      sem_init(&sellers[i].waiting, 0, 0);
+
+      //Create seller threads
+      pthread_attr_t ticketSellerAttr;
+      pthread_attr_init(&ticketSellerAttr);
+      pthread_create(&sellers[i].threadid, &ticketSellerAttr, ticketSeller, &sellers[i]);
+   }
 }
 
 int main() {
-   init();
+   //srand(time(0));
+
+   //Initialize seats and sellers
+   initSeats();
+   initSellers();
 
    //Initialize the mutexes
    pthread_mutex_init(&seatMutex, NULL);
@@ -303,34 +354,6 @@ int main() {
 
    //Bind the timer signal
    signal(SIGALRM, timerHandler);
-
-   //Construct the sellers (1 HIGH, 3 MEDIUM, 6 LOW)
-   /* INCOMPLETE */
-   s_temp.name = "H0";
-   s_temp.type = HIGH;
-   s_temp.sold = 0;
-   sem_init(&s_temp.waiting, 0, 0);
-
-   //Create seller threads
-   /* INCOMPLETE */
-   pthread_t ticketSellerThreadId;
-   pthread_attr_t ticketSellerAttr;
-   pthread_attr_init(&ticketSellerAttr);
-   pthread_create(&ticketSellerThreadId, &ticketSellerAttr, ticketSeller, &s_temp);
-
-   //Construct the sellers (1 HIGH, 3 MEDIUM, 6 LOW)
-   /* INCOMPLETE */
-   s_qemp.name = "M1";
-   s_qemp.type = MEDIUM;
-   s_qemp.sold = 0;
-   sem_init(&s_qemp.waiting, 0, 0);
-
-   //Create seller threads
-   /* INCOMPLETE */
-   pthread_t ticketSellerThreadId2;
-   pthread_attr_t ticketSellerAttr2;
-   pthread_attr_init(&ticketSellerAttr2);
-   pthread_create(&ticketSellerThreadId2, &ticketSellerAttr2, ticketSeller, &s_qemp);
 
    //Start the ticket selling
    printf("Simulation start\n");
@@ -340,12 +363,14 @@ int main() {
    setitimer(ITIMER_REAL, &saleTimer, NULL);
 
    //Wait for the threads to finish
-   /* INCOMPLETE */
-   pthread_join(ticketSellerThreadId, NULL);
-   pthread_join(ticketSellerThreadId2, NULL);
+   int i;
+   for (i = 0; i < 10; i++) {
+      pthread_join(sellers[i].threadid, NULL);
+   }
 
    print("Simulation Complete", TRUE);
 
+   printf("Sales:\nH: %d\nM: %d\nL: %d\nLost: %d\n", sales[HIGH], sales[MEDIUM], sales[LOW], lost_sales);
    return 1;
 }
 
